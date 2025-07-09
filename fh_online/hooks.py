@@ -242,3 +242,13 @@ app_license = "mit"
 # 	"Logging DocType Name": 30  # days to retain logs
 # }
 
+fixtures = [
+    "Custom Field",
+    "Client Script",
+    "Property Setter",
+    "Print Format",
+    "Print Format",
+    "Letter Head",
+    "Workspace",
+    "Custom HTML Block"
+]
