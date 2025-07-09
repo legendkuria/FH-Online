@@ -33,7 +33,7 @@ def get_all_products():
         return {"error": str(e)}, 400
 
 
-@frappe.whitelist(methods=["GET"])
+@frappe.whitelist(allow_guest=True, methods=["GET"])
 def get_default_currency():
     try:
         default_currency = frappe.get_single('Global Defaults')
