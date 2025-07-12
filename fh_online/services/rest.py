@@ -71,8 +71,8 @@ def customer_registration(**kwargs):
                 customer_name=customer_name
             )
         else:
-            return {"status": 500, "message": "You already registered."}
-        return {"status": 200, "message": "Customer registration initiated."}
+            return {"status": 500, "message": "You are already registered."}
+        return {"status": 200, "message": "Customer registered Successfully."}
 
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "Customer Registration Error")
@@ -213,7 +213,8 @@ def send_opt(mobile_number):
                 f"Your OTP is {one_time_password_doc.one_time_password}."
             )
         
-        send_sms(mobile_number, message)
+        if send_sms(mobile_number, message):
+            return "OTP sent successfully."
    
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), f"{str(e)}")
@@ -229,7 +230,7 @@ def validate_otp_exists(**kwargs):
         mobile_number = kwargs.get('mobile_number')
         otp = kwargs.get('otp')
         mobile_number = mobile_number.lstrip("+")
-        if frappe.db.exists("One Time Password", {"name": mobile_number, "one_time_password": otp}):
+        if frappe.db.exists("One Time Password", {"mobile_number": mobile_number, "one_time_password": otp}):
             return {'status': 200, 'message': 1}
         else:
             return {'status': 200, 'message': 0}
