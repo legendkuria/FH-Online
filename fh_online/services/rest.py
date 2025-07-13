@@ -1,6 +1,7 @@
 import frappe
 import requests
 import random
+from datetime import datetime
 
 @frappe.whitelist(allow_guest=True, methods=["GET"])
 def get_all_products():
@@ -314,3 +315,172 @@ def generate_keys(user):
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), f"Error in login: {e}")
         return {"status": "error", "message": str(e)}
+
+
+@frappe.whitelist(methods="POST")
+def create_order(**kwargs):
+    try:
+        sales_order_items = kwargs.get('sales_order_items')
+        delivery_date = kwargs.get('delivery_date')
+        sales_order_name = kwargs.get('sales_order_name')
+        logged_in_user = kwargs.get('logged_in_user')
+        if not logged_in_user:
+            return {'status': 500, 'message': 'Logged in user is required.'}
+        
+        customer = frappe.db.get_value("Customer", {"email_id": logged_in_user}, "name")
+
+        if not customer:
+            return {'status': 200, 'message': 'You are not linked to any customer profile.'}
+            
+
+        sales_order_items_details = []
+        formatted_date = format_date(delivery_date)
+
+
+        for sales_order_item in sales_order_items:
+            
+            rate = frappe.db.get_value("Item Price", 
+                {"item_code": sales_order_item['item_code'], "price_list": "Standard Selling"}, 
+                "price_list_rate")
+            
+            if not rate:
+                return {'status': 500, 'message': f"Unit price for item {sales_order_item['item_code']} is not set."}
+   
+
+            sales_order_items_details.append({
+                "item_code": sales_order_item['item_code'],
+                "delivery_date": formatted_date,
+                "qty": sales_order_item['quantity'],
+                "rate": rate
+            })
+
+
+        if sales_order_name:
+            if frappe.db.exists("Sales Order", {"name": sales_order_name}):
+                sales_order_doc = frappe.get_doc("Sales Order", sales_order_name)
+                sales_order_doc.delivery_date = formatted_date
+                sales_order_doc.customer = customer
+
+                sales_order_doc.items = [] 
+
+                for item in sales_order_items_details:
+                    sales_order_doc.append("items", item)
+
+                sales_order_doc.save(ignore_permissions=True)
+                frappe.db.commit()
+
+                return {'status': 200, 'message': 'Sales order updated successfully.'}
+            else:
+                return {'status': 404, 'message': 'Sales order not found.'}
+
+        else:
+
+            sales_order_doc = frappe.get_doc({
+                "doctype": "Sales Order",
+                "customer": customer,
+                "delivery_date": formatted_date,
+                "items": sales_order_items_details
+            })
+
+            sales_order_doc.insert(ignore_mandatory=True, ignore_permissions=True)
+            frappe.db.commit()
+            return {'status': 200, 'message': 'Order created successfully.'}
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), f"{str(e)}")
+        return {'status': 500, 'message': f'An error occurred: {str(e)}'}
+
+
+@frappe.whitelist()
+def submit_sales_order(**kwargs):
+    try:
+        sales_order_name = kwargs.get('sales_order_name')
+        if frappe.db.exists("Sales Order", {"name": sales_order_name}):
+            sales_order_doc = frappe.get_doc("Sales Order", sales_order_name)
+            sales_order_doc.submit()
+            frappe.db.commit()
+            return {'status': 200, 'message': 'Order submitted successfully.'}
+        else:
+            return {'status': 404, 'message': 'Order not found.'}
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), f"Error in submit_sales_order: {e}")
+        return {'status': 500, 'message': 'An error occurred while submitting the order.'}
+
+
+
+def format_date(date):
+    try:
+        parsed_date = datetime.strptime(date, "%d-%m-%Y")
+        return parsed_date.strftime("%Y-%m-%d")
+    except Exception as e:
+         frappe.log_error(frappe.get_traceback(), f"{e}")
+
+
+
+@frappe.whitelist(methods="GET")
+def get_orders(logged_in_user):
+    try:
+        sales_orders = {}
+
+        if not logged_in_user:
+            return {'status': 500, 'message': 'Logged in user is required.'}
+        
+        customer = frappe.db.get_value("Customer", {"email_id": logged_in_user}, "name")
+
+        if not customer:
+            return {'status': 200, 'message': 'You are not linked to any customer profile.'}
+
+        sales_orders_data = frappe.db.sql("""
+            SELECT
+                SO.name AS sales_order_name,
+                SO.customer AS customer,
+                SO.delivery_date AS delivery_date,
+                SO.rounded_total AS total_amount,
+                SO.status AS status,
+                SOI.item_code AS item_code,
+                SOI.qty AS quantity,
+                SOI.rate AS unit_price,
+                SOI.amount AS amount,
+                IT.image AS product_image
+            FROM
+                `tabSales Order` SO
+            JOIN
+                `tabSales Order Item` SOI ON SOI.parent = SO.name
+            LEFT JOIN
+                `tabItem` IT ON SOI.item_code = IT.name
+            WHERE
+                SO.docstatus != 2 AND SO.customer = %s
+        """, (customer,), as_dict=True)
+
+        for row in sales_orders_data:
+            sales_order_name = row.pop("sales_order_name")
+            
+            if sales_order_name not in sales_orders:
+                sales_orders[sales_order_name] = {
+                    "customer": row["customer"],
+                    "delivery_date": row["delivery_date"],
+                    "total_amount": row["total_amount"],
+                    "status": row["status"],
+                    "items": []
+                }
+
+            sales_orders[sales_order_name]["items"].append({
+                "item_code": row["item_code"],
+                "quantity": row["quantity"],
+                "unit_price": row["unit_price"],
+                "amount": row["amount"],
+                "product_image": row["product_image"] or ""
+            })
+
+        sales_orders_list = [
+            {"sales_order_name": name, **details}
+            for name, details in sales_orders.items()
+        ]
+
+        return {
+            "status": 200,
+            "sales_orders": sales_orders_list
+        }
+
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), f"{e}")
+        return {"error": str(e)}, 400
